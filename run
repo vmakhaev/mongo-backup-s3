@@ -1,0 +1,57 @@
+#!/bin/bash
+
+if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+  echo "AWS_ACCESS_KEY_ID must be set"
+fi
+
+if [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+  echo "AWS_SECRET_ACCESS_KEY must be set"
+fi
+
+if [ -z "$S3_BUCKET" ]; then
+  echo "S3_BUCKET must be set"
+fi
+
+if [ -z "$S3_MONGO_PREFIX" ]; then
+  echo "S3_MONGO_PREFIX must be set"
+fi
+
+if [ -z "$MONGO_HOST" ]; then
+  if [ -n "${MONGO_PORT_27017_TCP_ADDR}" ]; then
+    MONGO_HOST=$MONGO_PORT_27017_TCP_ADDR
+    MONGO_PORT=$MONGO_PORT_27017_TCP_PORT
+  else
+    echo "You need to set the MONGO_HOST environment variable."
+    exit 1
+  fi
+fi
+
+if [ "$1" == "backup" ]; then
+  echo "Starting backup..."
+
+  DATE=$(date +%Y%m%d_%H%M%S)
+  FILE='/backup/backup-$date.tar.gz'
+
+  rm -rf dump
+  mongodump -h $MONGO_HOST --port $MONGO_PORT -u $MONGO_USERNAME -p $MONGO_PASSWORD
+  tar zcf $FILE dump/
+  aws s3api put-object --bucket $S3_BUCKET --key $S3_MONGO_PREFIX/$DATE.tar.gz --body $FILE
+
+elif [ "$1" == "list" ]; then
+	echo "Listing backups..."
+
+	aws s3api list-objects --bucket $S3_BUCKET --prefix $S3_MONGO_PREFIX --query 'Contents[].{Key: Key, Size: Size}' --output table
+
+elif [ "$1" == "restore" ]; then
+  echo "Starting restore from file ${2} ..."
+
+  FILE=$2
+
+  rm -rf dump
+  aws s3api get-object --bucket $S3_BUCKET --key $S3_MONGO_PREFIX/$FILE /backup/$FILE
+  tar zxf /backup/$FILE -C /backup
+  mongorestore -h $MONGO_HOST --port $MONGO_PORT -u $MONGO_USERNAME -p $MONGO_PASSWORD dump/
+
+else
+  echo "Unknown command ${1}"
+fi
